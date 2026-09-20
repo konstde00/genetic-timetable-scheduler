@@ -1,95 +1,83 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Genetic timetable scheduler
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+This project is created to build university timetables. Every teaching assignment needs a
+slot, a room and a teacher, and nothing can collide.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://coveralls.io/github/nestjs/nest?branch=master" target="_blank"><img src="https://coveralls.io/repos/github/nestjs/nest/badge.svg?branch=master#9" alt="Coverage" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Timetabling is NP-hard. A genetic algorithm runs over populations of candidate timetables,
+each scored by a weighted fitness function.
 
-## Description
+## Why a genetic algorithm
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+We have hard constraints: nobody double-booked, every assignment covered for its required
+hours.
 
-## Project setup
+Soft constraints are preferences. We collect these from teachers and transform them into
+`(teacher, day, slot, PREFERRED_FREE | PREFERRED_BUSY)` tuples. They contradict each other,
+so no timetable satisfies all of them. A constraint solver wants constraints that can
+actually be satisfied; here you want to lose as little as possible. Violating a preference
+costs points rather than killing the candidate.
+
+Hard constraints are handled separately, by repair rather than by penalty. `repairSchedule`
+runs after initialisation, crossover and mutation, relocating any conflicting event, so the
+population stays feasible and fitness only scores the things that are a matter of degree.
+
+## The algorithm
+
+A chromosome is a full weekly timetable: a variable-length list of events, each with a group,
+subject, teacher, classroom, day and pair slot.
+
+Selection is binary tournament. Crossover is single point over the event list, followed by
+repair. Mutation picks uniformly among five operators: move an event to another weekday, move
+it to another pair slot, swap day and slot between two subjects in one group, add a lesson,
+delete a lesson. The last two change chromosome length, which is how coverage errors get
+corrected in either direction.
+
+```ts
+interface GeneticAlgorithmConfig {
+  populationSize: number;
+  crossoverRate: number;
+  mutationRate: number;
+  generations: number;
+}
+```
+
+## The fitness function
+
+Six penalty terms, in `generation/fitnessFunction.ts`:
+
+| Term | Penalises |
+|---|---|
+| Teacher gaps | idle slots between a teacher's classes on the same day |
+| Group gaps | same, for student groups |
+| Teacher hours | deviation from contracted load |
+| Preferences | a class in a `PREFERRED_FREE` slot, or a `PREFERRED_BUSY` slot left empty |
+| Classroom utilisation | small group in a large room, scaled by how far under capacity |
+| Coverage | missing and over-scheduled hours per group, subject and lesson type |
+
+## Layout
+
+The solver lives in `src/schedules/generation/`: `geneticAlgorithm.ts` (selection, crossover,
+mutation, repair, the generation loop), `fitnessFunction.ts`, `scheduleGenerator.ts` for the
+initial population, and `expandWeeklySchedule.ts` to spread a weekly pattern over a semester.
+
+Around it: domain modules for teachers, groups, classrooms, subjects, semesters and
+assignments, a `teacher-preferences` module, an `excelparser` for importing existing
+timetables, and auth.
+
+NestJS and TypeScript, Prisma over PostgreSQL, OpenAPI spec in `openapi.yaml`.
+
+## Tests
+
+`geneticAlgorithm.spec.ts` is bigger than the file it tests. The solver is stochastic, so the
+tests check invariants instead of outputs: no hard constraint violated, fitness improving
+across generations, coverage arithmetic correct.
+
+## Running it
 
 ```bash
-$ npm install
+cp .env.example .env
+docker compose up -d
+npm install
+npx prisma migrate deploy
+npm run start:dev
 ```
-
-## Environment Variables
-For local development, you need to add a .env file in the root directory of the project with the following content:
-
-```env
-DATABASE_URL="mysql://root:password@localhost:3306/db"
-```
-
-This configuration sets up the connection url to your local MySQL database.
-
-## Compile and run the project
-
-```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
-```
-
-## Run tests
-
-```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
-```
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
